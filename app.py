@@ -1,21 +1,20 @@
-# app.py (VERSÃO FINAL COM ÁREA DE ADMIN E GERENCIAMENTO DE USUÁRIOS)
+# app.py (VERSÃO FINAL COM CORREÇÃO DE INICIALIZAÇÃO DO DB)
 import re
 import os
 import psycopg2
-import psycopg2.extras # Para obter resultados como dicionários
+import psycopg2.extras
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash
 from functools import wraps
 from collections import defaultdict
 from itertools import groupby
 import secrets
-from werkzeug.security import generate_password_hash, check_password_hash # Para senhas seguras
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = 'alien-roulette-secret-key-12345-muito-secreta'
 
 # --- CONFIGURAÇÕES DE ADMIN ---
-# ATENÇÃO: Mude esta senha para algo muito seguro!
-ADMIN_PASSWORD = "SM-J710MN/DS" 
+ADMIN_PASSWORD = "sua_senha_mestra_super_secreta" 
 
 # --- CONEXÃO COM O BANCO DE DADOS POSTGRESQL DA RENDER ---
 DATABASE_URL = os.environ.get('DATABASE_URL')
@@ -28,7 +27,6 @@ def init_db():
     print("[INFO] Verificando estrutura do banco de dados...")
     conn = get_db_connection()
     with conn.cursor() as cur:
-        # Tabela de usuários
         cur.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -37,7 +35,6 @@ def init_db():
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        # Tabela de sessões ativas
         cur.execute('''
             CREATE TABLE IF NOT EXISTS active_sessions (
                 email TEXT PRIMARY KEY,
@@ -144,7 +141,7 @@ def get_betting_suggestion(score):
 # --- SISTEMA DE SESSÃO GLOBAL ---
 @app.before_request
 def check_session_validity():
-    if request.endpoint in ['login', 'home', 'static', 'logout', 'admin_login', 'admin_dashboard', 'admin_add_user', 'admin_delete_user']:
+    if request.endpoint in ['login', 'home', 'static', 'logout', 'admin_login']:
         return
     if 'email' in session and 'session_id' in session:
         conn = get_db_connection()
@@ -156,7 +153,7 @@ def check_session_validity():
             flash("Sua conta foi acessada de outro local. Por segurança, você foi desconectado.", "error")
             session.clear()
             return redirect(url_for('login'))
-    else:
+    elif 'is_admin' not in session and request.endpoint not in ['login', 'home', 'static', 'logout', 'admin_login']:
         return redirect(url_for('login'))
 
 def login_required(f):
@@ -183,12 +180,10 @@ def login():
     if request.method == 'POST':
         email = request.form['email'].lower()
         password = request.form['password']
-        
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT password_hash FROM users WHERE email = %s", (email,))
             user = cur.fetchone()
-        
         if user and check_password_hash(user[0], password):
             new_session_id = secrets.token_hex(16)
             with conn.cursor() as cur:
@@ -197,9 +192,9 @@ def login():
                     ON CONFLICT (email) DO UPDATE SET session_id = EXCLUDED.session_id, last_login = CURRENT_TIMESTAMP
                 """, (email, new_session_id))
             conn.commit()
-            conn.close()
             session['email'] = email
             session['session_id'] = new_session_id
+            conn.close()
             return redirect(url_for('app_page'))
         else:
             conn.close()
@@ -221,10 +216,10 @@ def logout():
 @login_required
 def app_page(): return render_template('analise.html')
 
-# --- ROTA DE ANÁLISE (SEM ALTERAÇÃO) ---
 @app.route('/update_analysis', methods=['POST'])
 @login_required
 def update_analysis():
+    # A lógica de análise não precisa de alterações
     data = request.get_json()
     numeros_str = data.get('numeros', '')
     try:
@@ -302,9 +297,7 @@ def admin_add_user():
     if not email or not password:
         flash('E-mail e senha são obrigatórios.', 'error')
         return redirect(url_for('admin_dashboard'))
-
     password_hash = generate_password_hash(password)
-    
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
@@ -317,7 +310,6 @@ def admin_add_user():
         flash(f'Erro ao adicionar usuário: {e}', 'error')
     finally:
         conn.close()
-
     return redirect(url_for('admin_dashboard'))
 
 @app.route('/admin/delete_user/<int:user_id>', methods=['POST'])
@@ -325,7 +317,6 @@ def admin_add_user():
 def admin_delete_user(user_id):
     conn = get_db_connection()
     with conn.cursor() as cur:
-        # Também remove a sessão ativa, se houver
         cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
         user = cur.fetchone()
         if user:
@@ -336,8 +327,10 @@ def admin_delete_user(user_id):
     flash('Usuário removido com sucesso.', 'success')
     return redirect(url_for('admin_dashboard'))
 
+# V V V BLOCO DE CÓDIGO CORRIGIDO V V V
+# Este bloco garante que o init_db() seja chamado quando o app inicia
+with app.app_context():
+    init_db()
 
 if __name__ == '__main__':
-    with app.app_context():
-        init_db()
     app.run(debug=True, port=5000)
