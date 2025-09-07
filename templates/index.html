@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alien Roulette - Início</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="container">
+    <nav>
+      <div class="logo">
+        <a href="{{ url_for('home') }}">Alien<span>Team.</span></a>
+      </div>
+      <div class="buttons">
+        <a href="{{ url_for('login') }}" class="logout-button">Acessar App</a>
+      </div>
+    </nav>
+    <div class="content">
+      <h2>Olá,<br>Alien Roulette <span>Ativado</span></h2>
+      <p>Cole os últimos números da roleta e deixe a inteligência alienígena calcular o próximo passo.<br>Você joga. Nós mostramos o caminho.</p>
+    </div>
+    <div class="link">
+      <a href="{{ url_for('app_page') }}" class="action-btn">COMEÇAR ANÁLISE</a>
+    </div>
+  </div>
+</body>
+</html>

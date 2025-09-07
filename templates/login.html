@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alien Roulette - Acesso</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="container full-height-container">
+    <div class="login-container">
+      <form class="login-form" method="POST" action="{{ url_for('login') }}">
+        <h2>TERMINAL DE ACESSO</h2>
+        <p>Insira suas credenciais para iniciar a análise.</p>
+
+        <!-- Bloco para exibir mensagens de erro -->
+        {% with messages = get_flashed_messages(category_filter=['error']) %}
+          {% if messages %}
+            <div class="flash-error">{{ messages[0] }}</div>
+          {% endif %}
+        {% endwith %}
+
+        <input type="email" name="email" placeholder="Seu e-mail de acesso" required autocomplete="off">
+        <input type="password" name="password" placeholder="Sua senha" required>
+        <button type="submit">ENTRAR</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
