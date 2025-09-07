@@ -14,7 +14,7 @@ app = Flask(__name__)
 app.secret_key = 'alien-roulette-secret-key-12345-muito-secreta'
 
 # --- CONFIGURAÇÕES DE ADMIN ---
-ADMIN_PASSWORD = "sua_senha_mestra_super_secreta" 
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')
 
 # --- CONEXÃO COM O BANCO DE DADOS POSTGRESQL DA RENDER ---
 DATABASE_URL = os.environ.get('DATABASE_URL')
