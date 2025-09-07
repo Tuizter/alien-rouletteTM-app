@@ -1,52 +1,53 @@
-# app.py (VERSÃO FINAL COM LOGS DE DEPURAÇÃO)
+# app.py (VERSÃO FINAL COM ÁREA DE ADMIN E GERENCIAMENTO DE USUÁRIOS)
 import re
 import os
 import psycopg2
+import psycopg2.extras # Para obter resultados como dicionários
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash
 from functools import wraps
 from collections import defaultdict
 from itertools import groupby
 import secrets
+from werkzeug.security import generate_password_hash, check_password_hash # Para senhas seguras
 
 app = Flask(__name__)
 app.secret_key = 'alien-roulette-secret-key-12345-muito-secreta'
 
-# --- BANCO DE DADOS DE USUÁRIOS ---
-USERS = {'team@aliendev.com': 'projeto22'}
+# --- CONFIGURAÇÕES DE ADMIN ---
+# ATENÇÃO: Mude esta senha para algo muito seguro!
+ADMIN_PASSWORD = "SM-J710MN/DS" 
 
 # --- CONEXÃO COM O BANCO DE DADOS POSTGRESQL DA RENDER ---
 DATABASE_URL = os.environ.get('DATABASE_URL')
-print(f"[INFO] DATABASE_URL carregada: {'...' + DATABASE_URL[-10:] if DATABASE_URL else 'NÃO ENCONTRADA'}")
 
 def get_db_connection():
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
-    except Exception as e:
-        print(f"[ERRO CRÍTICO] Falha ao conectar ao banco de dados: {e}")
-        return None
+    conn = psycopg2.connect(DATABASE_URL)
+    return conn
 
 def init_db():
-    print("[INFO] Tentando inicializar o banco de dados...")
-    try:
-        conn = get_db_connection()
-        if conn:
-            with conn.cursor() as cur:
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS active_sessions (
-                        email TEXT PRIMARY KEY,
-                        session_id TEXT NOT NULL,
-                        last_login TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-            conn.commit()
-            conn.close()
-            print("[SUCESSO] Tabela 'active_sessions' verificada/criada com sucesso.")
-        else:
-            print("[ERRO] Conexão com o DB falhou, não foi possível inicializar a tabela.")
-    except Exception as e:
-        print(f"[ERRO CRÍTICO] Falha ao executar init_db: {e}")
-
+    print("[INFO] Verificando estrutura do banco de dados...")
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        # Tabela de usuários
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        # Tabela de sessões ativas
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS active_sessions (
+                email TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                last_login TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+    conn.commit()
+    conn.close()
+    print("[SUCESSO] Estrutura do banco de dados verificada/criada.")
 
 # ############################################################### #
 # ### LÓGICA DE ANÁLISE AVANÇADA (SEM ALTERAÇÃO)              ### #
@@ -140,109 +141,79 @@ def get_betting_suggestion(score):
     if score == 2: return "Confiança MÉDIA"
     return "Confiança BAIXA (Ideal para Proteção ou Aguardar)"
 
-
-# --- SISTEMA DE VERIFICAÇÃO DE SESSÃO GLOBAL COM LOGS ---
+# --- SISTEMA DE SESSÃO GLOBAL ---
 @app.before_request
 def check_session_validity():
-    if request.endpoint in ['login', 'home', 'static', 'logout']:
+    if request.endpoint in ['login', 'home', 'static', 'logout', 'admin_login', 'admin_dashboard', 'admin_add_user', 'admin_delete_user']:
         return
-    
     if 'email' in session and 'session_id' in session:
-        print(f"\n[DEBUG] Verificando sessão para o endpoint: {request.endpoint}")
-        print(f"[DEBUG] Sessão do navegador: Email='{session['email']}', ID='{session['session_id']}'")
-        
         conn = get_db_connection()
-        if not conn:
-            print("[ERRO] Não foi possível verificar a sessão, falha na conexão com o DB.")
-            return redirect(url_for('login'))
-        
-        db_session_id = None
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT session_id FROM active_sessions WHERE email = %s", (session['email'],))
-                result = cur.fetchone()
-                if result:
-                    db_session_id = result[0]
-            conn.close()
-            print(f"[DEBUG] Sessão encontrada no DB: ID='{db_session_id}'")
-        except Exception as e:
-            print(f"[ERRO] Falha ao ler do banco de dados durante a verificação: {e}")
-            if conn: conn.close()
-            return redirect(url_for('login'))
-
-        if not db_session_id or db_session_id != session['session_id']:
-            print(f"[ALERTA] Sessão inválida! Navegador='{session['session_id']}', DB='{db_session_id}'. Desconectando usuário.")
+        with conn.cursor() as cur:
+            cur.execute("SELECT session_id FROM active_sessions WHERE email = %s", (session['email'],))
+            result = cur.fetchone()
+        conn.close()
+        if not result or result[0] != session['session_id']:
             flash("Sua conta foi acessada de outro local. Por segurança, você foi desconectado.", "error")
             session.clear()
             return redirect(url_for('login'))
-        
-        print("[DEBUG] Sessão VÁLIDA. Acesso permitido.")
     else:
-        # Se não há sessão, mas a rota é protegida, redireciona para o login
         return redirect(url_for('login'))
 
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        if 'email' not in session: return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
 
-# --- ROTAS DA APLICAÇÃO ---
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'is_admin' not in session or not session['is_admin']:
+            return redirect(url_for('admin_login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# --- ROTAS PÚBLICAS E DE USUÁRIO ---
 @app.route('/')
 def home(): return render_template('index.html')
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        email = request.form['email']
+        email = request.form['email'].lower()
         password = request.form['password']
-        if USERS.get(email) == password:
+        
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT password_hash FROM users WHERE email = %s", (email,))
+            user = cur.fetchone()
+        
+        if user and check_password_hash(user[0], password):
             new_session_id = secrets.token_hex(16)
-            print(f"\n[DEBUG] Usuário '{email}' fez login. Gerando novo ID de sessão: '{new_session_id}'")
-            
-            conn = get_db_connection()
-            if not conn:
-                flash("Erro interno do servidor, não foi possível iniciar a sessão. Tente novamente.", "error")
-                return render_template('login.html')
-
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        INSERT INTO active_sessions (email, session_id) VALUES (%s, %s)
-                        ON CONFLICT (email) DO UPDATE SET session_id = EXCLUDED.session_id, last_login = CURRENT_TIMESTAMP
-                    """, (email, new_session_id))
-                conn.commit()
-                conn.close()
-                print(f"[DEBUG] ID de sessão '{new_session_id}' salvo no DB para '{email}'.")
-            except Exception as e:
-                print(f"[ERRO] Falha ao salvar a sessão no DB: {e}")
-                if conn: conn.close()
-                flash("Erro interno do servidor ao salvar a sessão.", "error")
-                return render_template('login.html')
-
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO active_sessions (email, session_id) VALUES (%s, %s)
+                    ON CONFLICT (email) DO UPDATE SET session_id = EXCLUDED.session_id, last_login = CURRENT_TIMESTAMP
+                """, (email, new_session_id))
+            conn.commit()
+            conn.close()
             session['email'] = email
             session['session_id'] = new_session_id
             return redirect(url_for('app_page'))
         else:
+            conn.close()
             flash('Credenciais inválidas. Acesso Negado.', 'error')
     return render_template('login.html')
 
 @app.route('/logout')
 def logout():
     if 'email' in session:
-        print(f"\n[DEBUG] Usuário '{session['email']}' fazendo logout.")
         conn = get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM active_sessions WHERE email = %s", (session['email'],))
-                conn.commit()
-                conn.close()
-                print(f"[DEBUG] Sessão de '{session['email']}' removida do DB.")
-            except Exception as e:
-                print(f"[ERRO] Falha ao remover sessão do DB no logout: {e}")
-                if conn: conn.close()
-    
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM active_sessions WHERE email = %s", (session['email'],))
+        conn.commit()
+        conn.close()
     session.clear()
     return redirect(url_for('login'))
 
@@ -250,10 +221,10 @@ def logout():
 @login_required
 def app_page(): return render_template('analise.html')
 
+# --- ROTA DE ANÁLISE (SEM ALTERAÇÃO) ---
 @app.route('/update_analysis', methods=['POST'])
 @login_required
 def update_analysis():
-    # A lógica de análise não precisa de alterações
     data = request.get_json()
     numeros_str = data.get('numeros', '')
     try:
@@ -301,10 +272,72 @@ def update_analysis():
         'show_results': True
     })
 
-# Roda o init_db uma vez quando o aplicativo é iniciado no servidor
-# Isso é mais robusto que o comando no Procfile
-with app.app_context():
-    init_db()
+# --- NOVAS ROTAS PARA A ÁREA DE ADMINISTRAÇÃO ---
+@app.route('/admin', methods=['GET', 'POST'])
+def admin_login():
+    if request.method == 'POST':
+        password = request.form['password']
+        if password == ADMIN_PASSWORD:
+            session['is_admin'] = True
+            return redirect(url_for('admin_dashboard'))
+        else:
+            flash('Senha de administrador incorreta.', 'error')
+    return render_template('admin_login.html')
+
+@app.route('/admin/dashboard')
+@admin_required
+def admin_dashboard():
+    conn = get_db_connection()
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute("SELECT id, email, created_at FROM users ORDER BY created_at DESC")
+        users = cur.fetchall()
+    conn.close()
+    return render_template('admin_dashboard.html', users=users)
+
+@app.route('/admin/add_user', methods=['POST'])
+@admin_required
+def admin_add_user():
+    email = request.form['email'].lower()
+    password = request.form['password']
+    if not email or not password:
+        flash('E-mail e senha são obrigatórios.', 'error')
+        return redirect(url_for('admin_dashboard'))
+
+    password_hash = generate_password_hash(password)
+    
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO users (email, password_hash) VALUES (%s, %s)", (email, password_hash))
+        conn.commit()
+        flash(f'Usuário {email} adicionado com sucesso!', 'success')
+    except psycopg2.IntegrityError:
+        flash(f'O e-mail {email} já existe.', 'error')
+    except Exception as e:
+        flash(f'Erro ao adicionar usuário: {e}', 'error')
+    finally:
+        conn.close()
+
+    return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin/delete_user/<int:user_id>', methods=['POST'])
+@admin_required
+def admin_delete_user(user_id):
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        # Também remove a sessão ativa, se houver
+        cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+        user = cur.fetchone()
+        if user:
+            cur.execute("DELETE FROM active_sessions WHERE email = %s", (user[0],))
+        cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    conn.commit()
+    conn.close()
+    flash('Usuário removido com sucesso.', 'success')
+    return redirect(url_for('admin_dashboard'))
+
 
 if __name__ == '__main__':
+    with app.app_context():
+        init_db()
     app.run(debug=True, port=5000)

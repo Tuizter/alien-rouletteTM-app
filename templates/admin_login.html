@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alien Roulette - Acesso Admin</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="container full-height-container">
+    <div class="login-container">
+      <form class="login-form" method="POST" action="{{ url_for('admin_login') }}">
+        <h2>PAINEL DE CONTROLE</h2>
+        <p>Acesso restrito ao administrador.</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <input type="password" name="password" placeholder="Sua senha mestra" required>
+        <button type="submit">ACESSAR PAINEL</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
